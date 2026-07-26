@@ -10,7 +10,7 @@ st.markdown("Select the valve specifications below to generate dynamic component
 # --- 1. DATA LOADING ---
 @st.cache_data
 def load_data():
-    catalogue = pd.read_excel("Component catalogue_2.xlsx")
+    catalogue = pd.read_excel("Component catalogue.xlsx")
     matrix = pd.read_excel("MOC Rules Matrix.xlsx")
     return catalogue, matrix
 
