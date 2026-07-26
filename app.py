@@ -1,99 +1,112 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="PJ Valves - Costing Tool", layout="wide")
+# Set page configuration for a professional look
+st.set_page_config(page_title="Bare-Stem Valve Costing Tool", layout="wide")
 
-st.title("Internal Pricing Matrix")
-st.subheader("Butterfly - Double Offset - 4\" 150#")
+st.title("Bare-Stem Valve Costing Calculator")
+st.markdown("Select the valve specifications below to generate dynamic component costs.")
 
-# Load data securely
+# --- 1. DATA LOADING ---
 @st.cache_data
 def load_data():
-    cat = pd.read_excel("Component catalogue.xlsx")
-    matrix = pd.read_excel("MOC Rules Matrix.xlsx")
-    return cat, matrix
+    # Ensure this matches your exact GitHub file name
+    catalogue = pd.read_excel("Component catalogue.xlsx")
+    return catalogue
 
-try:
-    cat_df, matrix_df = load_data()
-except Exception as e:
-    st.error("Error loading Excel files. Ensure they are uploaded to GitHub correctly.")
-    st.stop()
+df_catalogue = load_data()
 
-# Extract dropdown options from your database
-bodies = cat_df[cat_df["Component Name"] == "Body"]["MOC"].unique()
-discs = cat_df[cat_df["Component Name"] == "Disc"]["MOC"].unique()
-stems = cat_df[cat_df["Component Name"] == "Stem"]["MOC"].unique()
-bolts = cat_df[cat_df["Component Name"] == "Bolting Set"]["MOC"].unique()
-seats_df = cat_df[cat_df["Component Name"].str.contains("seat", case=False, na=False)]
-seat_options = (seats_df["Component Name"].str.strip() + " | " + seats_df["MOC"]).unique()
+# --- 2. PRIMARY SELECTION CRITERIA ---
+st.header("1. Valve Specification")
+col1, col2, col3, col4 = st.columns(4)
 
-# Front-End UI
-col1, col2 = st.columns(2)
 with col1:
-    body_moc = st.selectbox("1. Select Body MOC", bodies, help="Auto-locks Flanges & Other Components")
-    disc_moc = st.selectbox("2. Select Disc MOC", discs, help="Auto-locks Retainer Ring")
-    stem_moc = st.selectbox("3. Select Stem MOC", stems)
+    valve_type = st.selectbox("Valve Type", ["Ball Valve", "Butterfly Valve"])
+
 with col2:
-    seat_selection = st.selectbox("4. Select Seat Option", seat_options)
-    bolting_moc = st.selectbox("5. Select Bolting MOC", bolts)
+    if valve_type == "Ball Valve":
+        sub_type = st.selectbox("Design Type", ["Floating", "Trunnion Mounted"])
+    else:
+        sub_type = st.selectbox("Design Type", ["Concentric", "Double Offset", "Triple Offset"])
 
-st.divider()
-st.subheader("Bill of Materials (BOM)")
+with col3:
+    size = st.selectbox("Size", ['2"', '3"', '4"', '6"', '8"', '10"', '12"'])
 
-bom = []
+with col4:
+    pressure_class = st.selectbox("Pressure Class", ["150#", "300#", "600#", "900#", "1500#"])
 
-def add_item(name, moc, cost):
-    bom.append({"Component": name, "MOC": moc, "Unit Cost (₹)": cost})
+st.markdown("---")
 
-# Logic Execution
-# 1. Body and Dependencies
-body_cost = cat_df[(cat_df["Component Name"] == "Body") & (cat_df["MOC"] == body_moc)]["Unit Cost (₹)"].values[0]
-add_item("Body", body_moc, body_cost)
+# --- 3. FILTERING THE DATABASE ---
+try:
+    filtered_df = df_catalogue[
+        (df_catalogue['Size'] == size) & 
+        (df_catalogue['Class'] == pressure_class)
+    ]
+except KeyError:
+    st.warning("Please ensure your Excel file has columns named exactly 'Size' and 'Class'.")
+    filtered_df = df_catalogue
 
-rule = matrix_df[matrix_df["Selected Body MOC"] == body_moc].iloc[0]
-flange_moc = rule["Auto-Select Flange MOC"]
-other_moc = rule["Auto-Select 'Other' MOC"]
+# --- 4. COMPONENT MOC SELECTION ---
+st.header(f"2. Component Selection for {size} {pressure_class} {sub_type} {valve_type}")
+col_a, col_b = st.columns(2)
 
-for comp in ["Gland Flange", "Bottom Flange"]:
-    cost = cat_df[(cat_df["Component Name"] == comp) & (cat_df["MOC"] == flange_moc)]["Unit Cost (₹)"].values[0]
-    add_item(comp, flange_moc, cost)
+with col_a:
+    st.subheader("Major Components")
+    # Fetching unique materials from the filtered dataframe
+    body_materials = filtered_df[filtered_df['Component'] == 'Body']['Material'].unique() if 'Component' in filtered_df.columns else []
+    body_moc = st.selectbox("Body MOC", body_materials if len(body_materials) > 0 else ["No data"])
+    
+    trim_materials = filtered_df[filtered_df['Component'] == 'Trim']['Material'].unique() if 'Component' in filtered_df.columns else []
+    trim_moc = st.selectbox("Trim MOC", trim_materials if len(trim_materials) > 0 else ["No data"])
 
-other_cost = cat_df[(cat_df["Component Name"] == "Other Components Bundle*") & (cat_df["MOC"] == other_moc)]["Unit Cost (₹)"].values[0]
-add_item("Other Components Bundle", other_moc, other_cost)
+with col_b:
+    st.subheader("Hardware & Seals")
+    bolting_materials = filtered_df[filtered_df['Component'] == 'Bolting']['Material'].unique() if 'Component' in filtered_df.columns else []
+    bolting_moc = st.selectbox("Bolting", bolting_materials if len(bolting_materials) > 0 else ["No data"])
+    
+    seal_materials = filtered_df[filtered_df['Component'] == 'Seals']['Material'].unique() if 'Component' in filtered_df.columns else []
+    seal_moc = st.selectbox("Soft Seals", seal_materials if len(seal_materials) > 0 else ["No data"])
 
-# 2. Disc and Dependencies
-disc_cost = cat_df[(cat_df["Component Name"] == "Disc") & (cat_df["MOC"] == disc_moc)]["Unit Cost (₹)"].values[0]
-add_item("Disc", disc_moc, disc_cost)
 
-ret_cost = cat_df[(cat_df["Component Name"] == "Retainer Ring") & (cat_df["MOC"] == disc_moc)]["Unit Cost (₹)"].values[0]
-add_item("Retainer Ring", disc_moc, ret_cost)
+# --- 5. COST CALCULATION ENGINE ---
+st.markdown("---")
+st.header("3. Cost Summary")
 
-# 3. Independent Components
-stem_cost = cat_df[(cat_df["Component Name"] == "Stem") & (cat_df["MOC"] == stem_moc)]["Unit Cost (₹)"].values[0]
-add_item("Stem", stem_moc, stem_cost)
+# A quick helper function to extract the cost from the dataframe based on the user's selection
+def get_cost(component_name, material_name):
+    try:
+        cost_series = filtered_df[(filtered_df['Component'] == component_name) & (filtered_df['Material'] == material_name)]['Unit Cost (₹)']
+        if not cost_series.empty:
+            return float(cost_series.values[0])
+        return 0.0
+    except Exception:
+        return 0.0
 
-bolt_cost = cat_df[(cat_df["Component Name"] == "Bolting Set") & (cat_df["MOC"] == bolting_moc)]["Unit Cost (₹)"].values[0]
-add_item("Bolting Set", bolting_moc, bolt_cost)
+# Fetch costs for the selected items
+body_cost = get_cost('Body', body_moc)
+trim_cost = get_cost('Trim', trim_moc)
+bolting_cost = get_cost('Bolting', bolting_moc)
+seal_cost = get_cost('Seals', seal_moc)
 
-seat_name, seat_moc = [s.strip() for s in seat_selection.split("|")]
-seat_cost = cat_df[(cat_df["Component Name"].str.strip() == seat_name) & (cat_df["MOC"] == seat_moc)]["Unit Cost (₹)"].values[0]
-add_item(seat_name, seat_moc, seat_cost)
+# Calculate totals
+total_component_cost = sum([body_cost, trim_cost, bolting_cost, seal_cost])
 
-# Bracket
-bracket_cost = cat_df[cat_df["Component Name"] == "Bracket"]["Unit Cost (₹)"].values[0]
-add_item("Bracket", "CF8M", bracket_cost)
+# Add the 4% conversion cost behind the scenes (multiply by 1.04)
+final_barestem_cost = total_component_cost * 1.04
 
-# Display Data
-bom_df = pd.DataFrame(bom)
-st.dataframe(bom_df, use_container_width=True, hide_index=True)
+# Display the Final Cost cleanly using Streamlit's metric widget
+st.metric(label="Barestem Valve Cost (₹)", value=f"₹ {final_barestem_cost:,.2f}")
 
-# Final Math
-total_bare = bom_df["Unit Cost (₹)"].sum()
-conversion = total_bare * 0.04
-final_cost = total_bare * 1.04
+# --- 6. BILL OF MATERIAL (Hidden in Expander) ---
+# Create the dataframe for the BOM
+bom_data = {
+    "Component": ["Body", "Trim", "Bolting", "Soft Seals"],
+    "Material Selected": [body_moc, trim_moc, bolting_moc, seal_moc],
+    "Cost (₹)": [body_cost, trim_cost, bolting_cost, seal_cost]
+}
+df_bom = pd.DataFrame(bom_data)
 
-# Dashboard Metrics
-col3, col4, col5 = st.columns(3)
-col3.metric("Total Bare-Stem Cost", f"₹ {total_bare:,.2f}")
-col4.metric("Conversion Cost (4%)", f"₹ {conversion:,.2f}")
-col5.metric("Final Calculated Cost", f"₹ {final_cost:,.2f}")
+# 'expanded=False' ensures it stays hidden until clicked, and resets when selections change
+with st.expander("View Bill of Material (BOM)", expanded=False):
+    st.dataframe(df_bom, use_container_width=True)
