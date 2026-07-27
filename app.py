@@ -9,70 +9,112 @@ st.markdown("Select the valve specifications below to generate dynamic component
 
 # --- 1. DATA LOADING ---
 @st.cache_data
-def load_data():
-    catalogue = pd.read_excel("Component catalogue.xlsx")
-    matrix = pd.read_excel("MOC Rules Matrix.xlsx")
-    return catalogue, matrix
+def load_catalogue():
+    return pd.read_excel("Component Catalogue.xlsx")
+
+@st.cache_data
+def load_matrix(valve_type):
+    try:
+        # Dynamically load the sheet named "Ball" or "Butterfly"
+        return pd.read_excel("MOC Rules Matrix.xlsx", sheet_name=valve_type)
+    except Exception:
+        # Fallback empty dataframe if the sheet isn't created yet
+        return pd.DataFrame(columns=['Selected Body MOC', 'Auto-Select Flange MOC', "Auto-Select 'Other' MOC"])
 
 try:
-    df_catalogue, df_matrix = load_data()
+    df_cat = load_catalogue()
 except Exception as e:
-    st.error("Error loading files. Ensure both 'Component catalogue_2.xlsx' and 'MOC Rules Matrix.xlsx' are uploaded to GitHub.")
+    st.error("Error loading 'Component Catalogue.xlsx'. Please ensure it is uploaded.")
     st.stop()
+
+# Failsafe: Create a dummy 'Bore' column if it hasn't been added to the Excel yet
+if 'Bore' not in df_cat.columns:
+    df_cat['Bore'] = "Full Bore"
 
 # --- 2. PRIMARY SELECTION CRITERIA ---
 st.header("1. Valve Specification")
-col1, col2, col3, col4 = st.columns(4)
+
+# Bifurcate Layout based on Valve Type
+col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
-    valve_types = df_catalogue['Valve Type'].dropna().unique().tolist()
-    valve_type = st.selectbox("Valve Type", valve_types)
+    valve_type = st.selectbox("Valve Type", ["Butterfly", "Ball"])
+
+# Load matrix for the selected valve type
+df_matrix = load_matrix(valve_type)
 
 with col2:
-    sub_types = df_catalogue[df_catalogue['Valve Type'] == valve_type]['Sub-Type'].dropna().unique().tolist()
-    sub_type = st.selectbox("Sub-Type", sub_types)
+    if valve_type == "Butterfly":
+        sub_type_options = ["Concentric", "Eccentric", "Double Offset", "Triple Offset"]
+    else:
+        sub_type_options = ["Trunnion", "Floating"]
+    sub_type = st.selectbox("Sub-Type", sub_type_options)
 
 with col3:
-    sizes = df_catalogue[(df_catalogue['Valve Type'] == valve_type) & 
-                         (df_catalogue['Sub-Type'] == sub_type)]['Size'].dropna().unique().tolist()
-    size = st.selectbox("Size", sizes)
+    # Filter sizes based on catalogue
+    available_sizes = df_cat[(df_cat['Valve Type'] == valve_type) & 
+                             (df_cat['Sub-Type'] == sub_type)]['Size'].dropna().unique().tolist()
+    size = st.selectbox("Size", available_sizes if available_sizes else ["No Data"])
 
 with col4:
-    classes = df_catalogue[(df_catalogue['Valve Type'] == valve_type) & 
-                           (df_catalogue['Sub-Type'] == sub_type) &
-                           (df_catalogue['Size'] == size)]['Class'].dropna().unique().tolist()
-    pressure_class = st.selectbox("Class", classes)
+    # Filter classes based on catalogue
+    available_classes = df_cat[(df_cat['Valve Type'] == valve_type) & 
+                               (df_cat['Sub-Type'] == sub_type) &
+                               (df_cat['Size'] == size)]['Class'].dropna().unique().tolist()
+    pressure_class = st.selectbox("Class", available_classes if available_classes else ["No Data"])
+
+with col5:
+    if valve_type == "Ball":
+        bore = st.selectbox("Bore", ["Full Bore", "Reduced Bore"])
+    else:
+        bore = None
 
 st.markdown("---")
 
 # --- 3. FILTERING THE DATABASE ---
-filtered_df = df_catalogue[
-    (df_catalogue['Valve Type'] == valve_type) &
-    (df_catalogue['Sub-Type'] == sub_type) &
-    (df_catalogue['Size'] == size) & 
-    (df_catalogue['Class'] == pressure_class)
-]
+if valve_type == "Ball":
+    filtered_df = df_cat[
+        (df_cat['Valve Type'] == valve_type) &
+        (df_cat['Sub-Type'] == sub_type) &
+        (df_cat['Size'] == size) & 
+        (df_cat['Class'] == pressure_class) &
+        (df_cat['Bore'] == bore)
+    ]
+else:
+    filtered_df = df_cat[
+        (df_cat['Valve Type'] == valve_type) &
+        (df_cat['Sub-Type'] == sub_type) &
+        (df_cat['Size'] == size) & 
+        (df_cat['Class'] == pressure_class)
+    ]
 
-# --- 4. COMPONENT SELECTION (Manual & Matrix Auto-Select) ---
-st.header(f"2. Component Selection for {size} Class {pressure_class} {sub_type} {valve_type}")
-components_in_valve = filtered_df['Component Name'].dropna().unique().tolist()
+# --- 4. COMPONENT SELECTION ---
+st.header(f"2. Component Selection")
 selected_mocs = {}
 
 col_a, col_b = st.columns(2)
 
-# Left Column: Body, Disc, Stem
+# ---- LEFT COLUMN: Body & Closure ----
 with col_a:
     st.subheader("Major Components")
     
-    # 1. Body Selection & Matrix Trigger
-    if 'Body' in components_in_valve:
-        body_mocs = filtered_df[filtered_df['Component Name'] == 'Body']['MOC'].dropna().unique().tolist()
+    # 1. Body Type & MOC
+    if valve_type == "Ball":
+        body_type_ui = st.selectbox("Body Type", ["Casting", "Forging"])
+        body_comp = "Casting Body" if body_type_ui == "Casting" else "Forged Body"
+    else:
+        body_type_ui = st.selectbox("Body Type", ["DF body", "Lug body", "wafer Body"])
+        body_comp = body_type_ui
+        
+    body_mocs = filtered_df[filtered_df['Component Name'] == body_comp]['MOC'].dropna().unique().tolist()
+    if body_mocs:
         body_moc = st.selectbox("Body MOC", body_mocs)
-        selected_mocs['Body'] = body_moc
+        selected_mocs[body_comp] = body_moc
     else:
         body_moc = None
-        
-    # Check Matrix Rules based on selected Body MOC
+        st.warning(f"No MOC data found for {body_comp}")
+
+    # Matrix Rules check based on Body MOC
     auto_flange_moc = None
     auto_other_moc = None
     if body_moc and not df_matrix.empty:
@@ -80,65 +122,78 @@ with col_a:
         if not rule.empty:
             auto_flange_moc = rule['Auto-Select Flange MOC'].values[0]
             auto_other_moc = rule["Auto-Select 'Other' MOC"].values[0]
-            
-    # 2. Disc
-    if 'Disc' in components_in_valve:
-        disc_mocs = filtered_df[filtered_df['Component Name'] == 'Disc']['MOC'].dropna().unique().tolist()
-        disc_moc = st.selectbox("Disc MOC", disc_mocs)
-        selected_mocs['Disc'] = disc_moc
-        
+
+    # 2. Closure Member (Ball or Disc)
+    closure_comp = "Ball" if valve_type == "Ball" else "Disc"
+    closure_mocs = filtered_df[filtered_df['Component Name'] == closure_comp]['MOC'].dropna().unique().tolist()
+    if closure_mocs:
+        closure_moc = st.selectbox(f"{closure_comp} MOC", closure_mocs)
+        selected_mocs[closure_comp] = closure_moc
+
     # 3. Stem
-    if 'Stem' in components_in_valve:
-        stem_mocs = filtered_df[filtered_df['Component Name'] == 'Stem']['MOC'].dropna().unique().tolist()
+    stem_mocs = filtered_df[filtered_df['Component Name'] == 'Stem']['MOC'].dropna().unique().tolist()
+    if stem_mocs:
         stem_moc = st.selectbox("Stem MOC", stem_mocs)
         selected_mocs['Stem'] = stem_moc
 
-# Right Column: Seat, Bolting, Other Bundles
+
+# ---- RIGHT COLUMN: Seats & Hardware ----
 with col_b:
     st.subheader("Seat & Hardware")
     
-    # 4. Under Seat Selection
-    seat_options = [c for c in ['Non Firesafe Seat', 'Firesafe Seat Ring'] if c in components_in_valve]
-    if seat_options:
-        seat_type = st.radio("Under Seat Type", seat_options)
+    # 4. Seat Logic
+    if valve_type == "Butterfly":
+        seat_type = st.radio("Under Seat Type", ["Non Firesafe Seat", "Firesafe Seat Ring"])
         seat_mocs = filtered_df[filtered_df['Component Name'] == seat_type]['MOC'].dropna().unique().tolist()
         if seat_mocs:
             seat_moc = st.selectbox(f"{seat_type} MOC", seat_mocs)
             selected_mocs[seat_type] = seat_moc
             
+    elif valve_type == "Ball":
+        seat_type = st.radio("Seat Type", ["Soft seat", "Metal Seat"])
+        seat_mocs = filtered_df[filtered_df['Component Name'] == seat_type]['MOC'].dropna().unique().tolist()
+        if seat_mocs:
+            seat_moc = st.selectbox(f"{seat_type} MOC", seat_mocs)
+            selected_mocs[seat_type] = seat_moc
+            
+        # Seat Ring (Appears for all Ball valves)
+        seat_ring_mocs = filtered_df[filtered_df['Component Name'] == 'Seat ring']['MOC'].dropna().unique().tolist()
+        if seat_ring_mocs:
+            seat_ring_moc = st.selectbox("Seat Ring MOC", seat_ring_mocs)
+            selected_mocs['Seat ring'] = seat_ring_moc
+            
+        # Seat Insert (Appears ONLY if Soft seat is selected)
+        if seat_type == "Soft seat":
+            insert_mocs = filtered_df[filtered_df['Component Name'] == 'Seat insert']['MOC'].dropna().unique().tolist()
+            if insert_mocs:
+                insert_moc = st.selectbox("Seat Insert MOC", insert_mocs)
+                selected_mocs['Seat insert'] = insert_moc
+
     # 5. Bolting set
-    if 'Bolting set' in components_in_valve:
-        bolt_mocs = filtered_df[filtered_df['Component Name'] == 'Bolting set']['MOC'].dropna().unique().tolist()
+    bolt_mocs = filtered_df[filtered_df['Component Name'] == 'Bolting set']['MOC'].dropna().unique().tolist()
+    if bolt_mocs:
         bolt_moc = st.selectbox("Bolting Set MOC", bolt_mocs)
         selected_mocs['Bolting set'] = bolt_moc
         
     # 6. Other Components Bundle (Matrix Auto-Selected Default)
-    if 'Other Components Bundle' in components_in_valve:
-        other_mocs = filtered_df[filtered_df['Component Name'] == 'Other Components Bundle']['MOC'].dropna().unique().tolist()
-        
-        # Set default dropdown index based on Matrix Rule
+    other_mocs = filtered_df[filtered_df['Component Name'] == 'Other Components Bundle']['MOC'].dropna().unique().tolist()
+    if other_mocs:
         default_idx = 0
         if auto_other_moc and auto_other_moc in other_mocs:
             default_idx = other_mocs.index(auto_other_moc)
-            
         other_moc = st.selectbox("Other Components Bundle MOC", other_mocs, index=default_idx)
         selected_mocs['Other Components Bundle'] = other_moc
 
 
 # --- BACKGROUND AUTO-ADDITIONS ---
-# Automatically assign matrix 'Flange' MOC rules to background components
 auto_flange_items = ['Gland Flange', 'Bottom Flange', 'Retainer Ring', 'Bracket']
 for item in auto_flange_items:
-    if item in components_in_valve:
-        comp_mocs = filtered_df[filtered_df['Component Name'] == item]['MOC'].dropna().unique().tolist()
-        
-        # Apply matrix rule if available in catalogue, otherwise fallback to first available
+    comp_mocs = filtered_df[filtered_df['Component Name'] == item]['MOC'].dropna().unique().tolist()
+    if comp_mocs:
         if auto_flange_moc and auto_flange_moc in comp_mocs:
             selected_mocs[item] = auto_flange_moc
-        elif comp_mocs:
-            selected_mocs[item] = comp_mocs[0] 
         else:
-            selected_mocs[item] = "No Data"
+            selected_mocs[item] = comp_mocs[0]
 
 st.markdown("---")
 
@@ -153,7 +208,6 @@ for comp, moc in selected_mocs.items():
     except:
         component_costs[comp] = 0.0
 
-# Summing logic & hiding the 4% conversion markup
 total_component_cost = sum(component_costs.values())
 final_barestem_cost = total_component_cost * 1.04 
 
