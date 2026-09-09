@@ -46,17 +46,16 @@ with col2:
     sub_type = st.selectbox("Sub-Type", sub_type_options)
 
 with col3:
-    available_sizes = df_cat[(df_cat['Valve Type'] == valve_type) & 
-                             (df_cat['Sub-Type'] == sub_type)]['Size'].dropna().unique().tolist()
-    # Changed to multiselect for bulk sizing
-    default_size = [available_sizes[0]] if available_sizes else []
-    sizes = st.multiselect("Size(s)", available_sizes, default=default_size)
+    available_classes = df_cat[(df_cat['Valve Type'] == valve_type) & 
+                               (df_cat['Sub-Type'] == sub_type)]['Class'].dropna().unique().tolist()
+    pressure_class = st.selectbox("Class", available_classes if available_classes else ["No Data"])
 
 with col4:
-    available_classes = df_cat[(df_cat['Valve Type'] == valve_type) & 
-                               (df_cat['Sub-Type'] == sub_type) &
-                               (df_cat['Size'].isin(sizes))]['Class'].dropna().unique().tolist()
-    pressure_class = st.selectbox("Class", available_classes if available_classes else ["No Data"])
+    available_sizes = df_cat[(df_cat['Valve Type'] == valve_type) & 
+                             (df_cat['Sub-Type'] == sub_type) &
+                             (df_cat['Class'] == pressure_class)]['Size'].dropna().unique().tolist()
+    default_size = [available_sizes[0]] if available_sizes else []
+    sizes = st.multiselect("Size(s)", available_sizes, default=default_size)
 
 with col5:
     if valve_type == "Ball":
@@ -188,7 +187,6 @@ else:
     summary_data = []
     bom_data = {"Component Name": list(selected_mocs.keys()), "MOC Selected": list(selected_mocs.values())}
 
-    # Calculate costs for every selected size individually
     for s in sizes:
         size_df = filtered_df[filtered_df['Size'] == s]
         size_costs = []
@@ -207,7 +205,6 @@ else:
         final_barestem_cost = total_component_cost * 1.04 
         summary_data.append({"Valve Size": s, "Final Barestem Cost (₹)": f"₹ {final_barestem_cost:,.2f}"})
 
-    # Display the final bulk costs in a clean table
     st.table(pd.DataFrame(summary_data))
 
     # --- 6. BILL OF MATERIAL (Hidden in Expander) ---
