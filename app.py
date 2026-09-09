@@ -28,11 +28,6 @@ except Exception as e:
 if 'Bore' not in df_cat.columns:
     df_cat['Bore'] = "Full Bore"
 
-# Helper function to sort classes numerically
-def extract_numeric(val):
-    digits = ''.join(filter(str.isdigit, str(val)))
-    return int(digits) if digits else 0
-
 # --- 2. PRIMARY SELECTION CRITERIA ---
 st.header("1. Valve Specification")
 
@@ -53,6 +48,7 @@ with col2:
 with col3:
     available_sizes = df_cat[(df_cat['Valve Type'] == valve_type) & 
                              (df_cat['Sub-Type'] == sub_type)]['Size'].dropna().unique().tolist()
+    # Changed to multiselect for bulk sizing
     default_size = [available_sizes[0]] if available_sizes else []
     sizes = st.multiselect("Size(s)", available_sizes, default=default_size)
 
@@ -60,13 +56,7 @@ with col4:
     available_classes = df_cat[(df_cat['Valve Type'] == valve_type) & 
                                (df_cat['Sub-Type'] == sub_type) &
                                (df_cat['Size'].isin(sizes))]['Class'].dropna().unique().tolist()
-    
-    # Sort available classes cleanly in the dropdown
-    available_classes = sorted(available_classes, key=extract_numeric)
-    default_class = [available_classes[0]] if available_classes else []
-    
-    # Changed to multiselect for bulk class sizing
-    pressure_classes = st.multiselect("Class(es)", available_classes, default=default_class)
+    pressure_class = st.selectbox("Class", available_classes if available_classes else ["No Data"])
 
 with col5:
     if valve_type == "Ball":
@@ -82,7 +72,7 @@ if valve_type == "Ball":
         (df_cat['Valve Type'] == valve_type) &
         (df_cat['Sub-Type'] == sub_type) &
         (df_cat['Size'].isin(sizes)) & 
-        (df_cat['Class'].isin(pressure_classes)) &
+        (df_cat['Class'] == pressure_class) &
         (df_cat['Bore'] == bore)
     ]
 else:
@@ -90,13 +80,12 @@ else:
         (df_cat['Valve Type'] == valve_type) &
         (df_cat['Sub-Type'] == sub_type) &
         (df_cat['Size'].isin(sizes)) & 
-        (df_cat['Class'].isin(pressure_classes))
+        (df_cat['Class'] == pressure_class)
     ]
 
 # --- 4. COMPONENT SELECTION ---
-size_label = ", ".join([str(s) for s in sizes]) if sizes else "No Size Selected"
-class_label = ", ".join([str(c) for c in pressure_classes]) if pressure_classes else "No Class Selected"
-st.header(f"2. Component Selection for {size_label} | Class: {class_label}")
+size_label = ", ".join(sizes) if sizes else "No Size Selected"
+st.header(f"2. Component Selection for {size_label}")
 selected_mocs = {}
 
 col_a, col_b = st.columns(2)
@@ -193,53 +182,35 @@ st.markdown("---")
 # --- 5. COST CALCULATION ENGINE ---
 st.header("3. Cost Summary")
 
-if not sizes or not pressure_classes:
-    st.warning("Please select at least one size and one class at the top to view costs.")
+if not sizes:
+    st.warning("Please select at least one size at the top to view costs.")
 else:
     summary_data = []
     bom_data = {"Component Name": list(selected_mocs.keys()), "MOC Selected": list(selected_mocs.values())}
 
-    # Ensure the classes are processed in ascending numerical order
-    sorted_classes = sorted(pressure_classes, key=extract_numeric)
-
-    # Group output by Class first, then by Size
-    for c in sorted_classes:
-        for s in sizes:
-            # Isolate the data for this specific size and class combo
-            size_class_df = filtered_df[(filtered_df['Size'] == s) & (filtered_df['Class'] == c)]
+    # Calculate costs for every selected size individually
+    for s in sizes:
+        size_df = filtered_df[filtered_df['Size'] == s]
+        size_costs = []
+        total_component_cost = 0.0
+        
+        for comp, moc in selected_mocs.items():
+            try:
+                cost_series = size_df[(size_df['Component Name'] == comp) & (size_df['MOC'] == moc)]['Unit Cost (₹)']
+                val = float(cost_series.values[0]) if not cost_series.empty else 0.0
+            except:
+                val = 0.0
+            size_costs.append(val)
+            total_component_cost += val
             
-            # Only generate a row if this combination actually exists in the catalogue
-            if not size_class_df.empty:
-                size_costs = []
-                total_component_cost = 0.0
-                
-                for comp, moc in selected_mocs.items():
-                    try:
-                        cost_series = size_class_df[(size_class_df['Component Name'] == comp) & (size_class_df['MOC'] == moc)]['Unit Cost (₹)']
-                        val = float(cost_series.values[0]) if not cost_series.empty else 0.0
-                    except:
-                        val = 0.0
-                    size_costs.append(val)
-                    total_component_cost += val
-                    
-                # Add the breakdown to the hidden BOM
-                bom_data[f"Cost ({s} Class {c}) ₹"] = size_costs
-                
-                # Add the final math to the visible table
-                final_barestem_cost = total_component_cost * 1.04 
-                summary_data.append({
-                    "Class": c,
-                    "Valve Size": s, 
-                    "Final Barestem Cost (₹)": f"₹ {final_barestem_cost:,.2f}"
-                })
+        bom_data[f"Cost ({s}) ₹"] = size_costs
+        final_barestem_cost = total_component_cost * 1.04 
+        summary_data.append({"Valve Size": s, "Final Barestem Cost (₹)": f"₹ {final_barestem_cost:,.2f}"})
 
     # Display the final bulk costs in a clean table
-    if summary_data:
-        st.table(pd.DataFrame(summary_data))
-    else:
-        st.warning("No cost data available for the selected combinations and MOCs.")
+    st.table(pd.DataFrame(summary_data))
 
     # --- 6. BILL OF MATERIAL (Hidden in Expander) ---
-    if selected_mocs and summary_data:
+    if selected_mocs:
         with st.expander("View Bill of Material (BOM) Breakdown", expanded=False):
             st.dataframe(pd.DataFrame(bom_data), use_container_width=True)
